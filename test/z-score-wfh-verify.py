@@ -8,7 +8,7 @@ Usage:
 
 The verifier checks the generated formula over:
 
-    genders: 0, 1
+    genders: male, female
     heights: 45..120 cm, 1 cm step
     weights: 0.1..40.0 kg, 0.1 kg step
 
@@ -30,6 +30,7 @@ HEIGHTS = range(45, 121)
 CAP = 3.5
 TOL = 1e-9
 TABLE_URL = "https://github.com/dhis2/expression-parser/blob/v1.4.2/src/commonMain/kotlin/org/hisp/dhis/lib/expression/math/ZScoreTable.kt"
+GENDER_SELECTOR = 'd2:countIfValue(A{var_sex_otp},"male")'
 ROW_RE = re.compile(
     r"addEntry\(res,\s*(?P<sex>[01]),\s*(?P<height>[0-9.]+),\s*"
     r"newSDMap\((?P<values>[^)]*)\)\)"
@@ -118,8 +119,13 @@ def official_wfh(height, weight, gender):
 def d2_oizp(value):
     return 1.0 if value is not None and float(value) >= 0 else 0.0
 
+def d2_countIfValue(value, sample):
+    return int(value == sample)
+
 def formula_code(formula_path):
     formula = formula_path.read_text().strip()
+    assert "d2:condition" not in formula
+    assert formula.count(GENDER_SELECTOR) == 2, "formula must select the male table for code 'male'"
     python = re.sub(r"#\{([^}]+)\}", r"\1", formula)
     python = re.sub(r"A\{([^}]+)\}", r"\1", python)
     python = python.replace("d2:", "d2_").replace("&&", " and ").replace("||", " or ")
@@ -130,6 +136,7 @@ def generated_value(code, gender, height, weight):
         "__builtins__": {},
         "d2_floor": math.floor,
         "d2_ceil": math.ceil,
+        "d2_countIfValue": d2_countIfValue,
         "d2_oizp": d2_oizp,
         "d2_zScoreWFH": official_wfh,
         "var_gender_otp": gender,
@@ -145,7 +152,7 @@ def verify(formula_path):
     total = compared = skipped = 0
     failures = []
 
-    for gender in (0, 1):
+    for gender in ("male", "female"):
         for height in HEIGHTS:
             for weight_tenths in WEIGHTS:
                 weight = weight_tenths / 10

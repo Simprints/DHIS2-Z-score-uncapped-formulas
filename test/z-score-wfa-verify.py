@@ -8,7 +8,7 @@ Usage:
 
 The verifier checks the generated formula over:
 
-    genders: 0, 1
+    genders: male, female
     ages: 0..60 months, 1 month step
     weights: 0.1..40.0 kg, 0.1 kg step
 
@@ -31,6 +31,7 @@ CAP = 3.5
 TOL = 1e-9
 EVENT_DATE = date(2026, 6, 16)
 TABLE_URL = "https://github.com/dhis2/expression-parser/blob/v1.4.2/src/commonMain/kotlin/org/hisp/dhis/lib/expression/math/ZScoreTable.kt"
+GENDER_SELECTOR = 'd2:countIfValue(A{var_sex_otp},"male")'
 ROW_RE = re.compile(
     r"addEntry\(res,\s*(?P<sex>[01]),\s*(?P<age>[0-9.]+),\s*"
     r"newSDMap\((?P<values>[^)]*)\)\)"
@@ -165,6 +166,9 @@ def d2_zScoreWFA(age, weight, gender):
 def d2_oizp(value):
     return 1.0 if value is not None and float(value) >= 0 else 0.0
 
+def d2_countIfValue(value, sample):
+    return int(value == sample)
+
 def dob_for_age(age):
     month = EVENT_DATE.month - age
     year = EVENT_DATE.year + (month - 1) // 12
@@ -177,6 +181,8 @@ def d2_monthsBetween(start, end):
 
 def formula_code(formula_path):
     formula = formula_path.read_text().strip()
+    assert "d2:condition" not in formula
+    assert formula.count(GENDER_SELECTOR) == 2, "formula must select the male table for code 'male'"
     python = re.sub(r"[#AV]\{([^}]+)\}", r"\1", formula)
     python = python.replace("d2:", "d2_").replace("&&", " and ").replace("||", " or ")
     return len(formula), compile(python, str(formula_path), "eval")
@@ -185,6 +191,7 @@ def generated_value(code, gender, age, weight):
     env = {
         "__builtins__": {},
         "d2_ceil": math.ceil,
+        "d2_countIfValue": d2_countIfValue,
         "d2_floor": math.floor,
         "d2_monthsBetween": d2_monthsBetween,
         "d2_oizp": d2_oizp,
@@ -204,7 +211,7 @@ def verify(formula_path):
     total = 0
     failures = []
 
-    for gender in (0, 1):
+    for gender in ("male", "female"):
         for age in AGES:
             for weight_tenths in WEIGHTS:
                 weight = weight_tenths / 10

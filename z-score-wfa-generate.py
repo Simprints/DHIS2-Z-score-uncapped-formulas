@@ -8,7 +8,7 @@ The generated expression assumes these program rule variables:
 
     A{var_age_in_months_otp}  Date of Birth TEI attribute
     #{var_weight_otp}         weight in kg
-    A{var_sex_otp}            option code: 0 = Male, 1 = Female
+    A{var_sex_otp}            option code: male = Male, female = Female
 
 Program rule condition for the ASSIGN action using this expression:
 
@@ -194,7 +194,7 @@ def main() -> None:
     boy_28 = complete_rows(boy_rows)[28]
     age_28 = eq(AGE_MONTHS, "28")
     safe_boy_age = f"({AGE_MONTHS} + {age_28})"
-    boy_mask = eq(GENDER, "0")
+    boy_mask = f'd2:countIfValue({GENDER},"male")'
     boy_non_28 = f"{builtin_wfa(safe_boy_age, '0')} + ({tail_corrections([r for r in boy_rows if r.age != 28])})"
     boy_expr = f"((1 - {age_28}) * ({boy_non_28})) + ({age_28} * ({row_score_expr(boy_28)}))"
     girl_expr = f"{builtin_wfa(AGE_MONTHS, '1')} + ({tail_corrections(girl_rows)})"
