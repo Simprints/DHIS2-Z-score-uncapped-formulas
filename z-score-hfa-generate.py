@@ -8,7 +8,7 @@ The generated expression assumes these program rule variables:
 
     A{var_age_in_months_otp}  Date of Birth TEI attribute
     #{var_height_otp}         height in cm
-    A{var_sex_otp}            option code: 0 = Male, 1 = Female
+    A{var_sex_otp}            option code: male = Male, female = Female
 
 Program rule condition for the ASSIGN action using this expression:
 
@@ -125,7 +125,7 @@ def main() -> None:
     source = fetch_table_source()
     boys = parse_table(source, "newZScoreHFATableBoy")
     girls = parse_table(source, "newZScoreHFATableGirl")
-    boy_mask = eq(GENDER, "0")
+    boy_mask = f'd2:countIfValue({GENDER},"male")'
     print(
         f"({boy_mask} * ({builtin_hfa('0')} + ({table_correction_expr(boys)}))) + "
         f"((1 - {boy_mask}) * ({builtin_hfa('1')} + ({table_correction_expr(girls)})))"
