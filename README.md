@@ -13,6 +13,16 @@ There's some domain-specific terminology involved in the scripts:
 
 The scripts generate formulas for the OTP program. Formulas for TSFP or RAMP can be obtained by replacing all `_otp` substrings with `_tsfp` or `_ramp`. For convenience, this is already done in the ready formulas in the `output` folder. If you check in the scripts that the program rule variable names match, the formulas are ready to paste into the value assignment form.
 
+### WHO LMS method for WFH
+
+As a replacement for uncapped DHIS2 z-score formulas, WHO LMS ones are added for WFH z-scores. These formulas treat height as length if below 87 cm. The `z-score-wfh-generate-who-lms.py` script requires `pandas` for parsing the `.dta` files:
+
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install pandas
+.venv/bin/python z-score-wfh-generate-who-lms.py wflanthro.dta wfhanthro.dta formula.txt
+```
+
 References:
 * Z-score logic in the DHIS2 expression parser: https://github.com/dhis2/expression-parser/blob/v1.4.2/src/commonMain/kotlin/org/hisp/dhis/lib/expression/math/ZScore.kt#L21-L68
 * Z-score statistical data tables in the DHIS2 expression parser: https://github.com/dhis2/expression-parser/blob/v1.4.2/src/commonMain/kotlin/org/hisp/dhis/lib/expression/math/ZScoreTable.kt
