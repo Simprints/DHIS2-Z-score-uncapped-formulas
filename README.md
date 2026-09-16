@@ -23,6 +23,17 @@ python3 -m venv .venv
 .venv/bin/python z-score-wfh-generate-who-lms.py wflanthro.dta wfhanthro.dta formula.txt
 ```
 
+#### WFH z-score in Nutrition Status
+
+Also, `nutrition-status-wfh-generate-who-lms.py` similarly outputs a program rule expression for the Nutrition Status, that depends on the WFH z-score alongside other measurements. It runs similarly:
+
+```sh
+.venv/bin/python nutrition-status-wfh-generate-who-lms.py wflanthro.dta wfhanthro.dta formula.txt
+```
+
+This is needed because an attempt to just use a precalculated WFH z-score value sometimes causes a missed "double-hop" calculation in DHIS2 program rules. It is more reliable to calculate the z-score from scratch, right in the Nutrition Status program rule expression.
+
+
 References:
 * Z-score logic in the DHIS2 expression parser: https://github.com/dhis2/expression-parser/blob/v1.4.2/src/commonMain/kotlin/org/hisp/dhis/lib/expression/math/ZScore.kt#L21-L68
 * Z-score statistical data tables in the DHIS2 expression parser: https://github.com/dhis2/expression-parser/blob/v1.4.2/src/commonMain/kotlin/org/hisp/dhis/lib/expression/math/ZScoreTable.kt
