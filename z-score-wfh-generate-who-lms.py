@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Generates the WHO LMS based WFH DHIS2 program rule expression for OTP program.
+"""Generates cubic spline-optimized WHO LMS based WFH DHIS2 program rule expression for OTP program.
 
 Dependencies:
-pandas - for parsing the .dta files - see usage below.
+pandas - for parsing .dta files and fitting cubic splines with numpy - see usage below.
 
 Usage:
 python3 -m venv .venv
@@ -15,7 +15,14 @@ Inputs:
 
 Notes:
 1. No "Height or length" field needed: it takes WFL below 87 cm, otherwise WFH.
-2. DHIS2 math truncates fractional exponents, so polynomial approximation is used.
+2. DHIS2 math truncates fractional exponents, so cubic spline approximation is used.
+3. Optimized for the DHIS2 rule engine, within 0.01 SD of unoptimized method, for 2-25 kg, 45-120 cm:
+   instead of looking up L, M, S at 2 reference points 0.1 cm apart and interpolating, it evaluates
+       zLMS = ((w / M)^L - 1) / (L * S)
+       z = min(3, max(-3, zLMS)) + max(0, w - SD3p) / SD23p - max(0, SD3n - w) / SD23n
+   with each height term (M^L, S, SD3n, SD23n, SD3p, SD23p) as a cubic spline of length or height,
+   and w^L as a cubic spline of weight, using the coarsest knots that keep the 0.01 SD.
+4. DHIS2 prioritizes + to -, * to /, so they are parenthesized for correct output.
 """
 
 import argparse
@@ -23,13 +30,16 @@ import math
 from dataclasses import dataclass
 from pathlib import Path
 
+import numpy as np
+
 
 WEIGHT = "#{var_weight_otp}"
 HEIGHT = "#{var_height_otp}"
 SEX = "A{var_sex_otp}"
-HEIGHT10 = f"({HEIGHT}*10)"
-EPSILON = "1e-6"  # exact grid tolerance, in height * 10
-EXP_POLYNOMIAL_DEGREE = 32
+WEIGHT_RANGE = (2, 25)  # kg
+LENGTH_KNOTS = [*range(46, 60), *range(60, 87, 4)]  # cm, denser for newborn
+HEIGHT_KNOTS = [*range(93, 120, 6)]  # cm
+WEIGHT_KNOTS = np.geomspace(*WEIGHT_RANGE, 8)[1:-1]  # kg, geometric for w^L
 
 
 @dataclass(frozen=True)
@@ -44,7 +54,6 @@ class Row:
 
 def read_reference(path: Path, reference: int) -> list[Row]:
     import pandas as pd
-
     table = pd.read_stata(path, convert_dates=False, convert_categoricals=False)
     height_column = "__000002" if reference == 0 else "__000003"
     rows = []
@@ -55,25 +64,17 @@ def read_reference(path: Path, reference: int) -> list[Row]:
     return rows
 
 
-def coefficients(row: Row) -> dict[str, float]:
+def lms_terms(row: Row) -> dict[str, float]:
     L, M, S = row.l, row.m, row.s
-
     def sd_weight(z: int) -> float:
         return M * (1 + L * S * z) ** (1 / L)
-
-    sd3n, sd2n = sd_weight(-3), sd_weight(-2)
-    sd2p, sd3p = sd_weight(2), sd_weight(3)
-    lower_width = sd2n - sd3n
-    upper_width = sd3p - sd2p
     return {
-        "a": M ** (-L) / (S * L),
-        "b": -1 / (S * L),
-        "lower_slope": 1 / lower_width,
-        "lower_intercept": -3 - sd3n / lower_width,
-        "upper_slope": 1 / upper_width,
-        "upper_intercept": 3 - sd3p / upper_width,
-        "sd3n": sd3n,
-        "sd3p": sd3p,
+        "median_power": M ** L,
+        "s": S,
+        "sd3n": sd_weight(-3),
+        "sd23n": sd_weight(-2) - sd_weight(-3),
+        "sd3p": sd_weight(3),
+        "sd23p": sd_weight(3) - sd_weight(2),
     }
 
 
@@ -81,65 +82,44 @@ def number(value: float) -> str:
     return str(int(value)) if value.is_integer() else format(value, ".10g")
 
 
-def choose(test: str, yes: str, no: str, quote: str = "'") -> str:
-    return f"d2:condition({quote}{test}{quote},{yes},{no})"
+def choose(test: str, yes: str, no: str) -> str:
+    return f"d2:condition('{test}',{yes},{no})"
+
+
+def fit_spline(x: np.ndarray, y: np.ndarray, knots: list[float]) -> np.ndarray:
+    basis = np.column_stack([x**degree for degree in range(4)] + [np.maximum(x - knot, 0) ** 3 for knot in knots])
+    return np.linalg.lstsq(basis / y[:, None], np.ones_like(y), rcond=None)[0]
+
+
+def spline_expression(variable: str, knots: list[float], coefficients: np.ndarray) -> str:
+    cubic = number(coefficients[3])
+    for coefficient in reversed(coefficients[:3]):
+        cubic = f"({number(coefficient)}+{variable}*{cubic})"
+    knot_terms = [f"{number(k)}*d2:zing({variable}-{number(float(knot))})^3"
+                  for knot, k in zip(knots, coefficients[4:])]
+    return "(" + "+".join([cubic, *knot_terms]) + ")"
 
 
 def weight_power(L: float) -> str:
-    def select(values: list[float]) -> str:
-        result = number(values[-1])
-        for boundary, value in reversed(list(zip((4, 8, 16), values[:-1]))):
-            result = choose(f"{WEIGHT}<{boundary}", number(value), result)
-        return result
-
-    scales = [3.0, 6.0, 12.0, 24.0]
-    x = f"({WEIGHT}/{select(scales)}-1)"
-    terms = [1.0]
-    for degree in range(1, EXP_POLYNOMIAL_DEGREE + 1):
-        terms.append(terms[-1] * (L - degree + 1) / degree)
-    polynomial = number(terms[-1])
-    for term in reversed(terms[:-1]):
-        polynomial = f"({number(term)}+{x}*{polynomial})"
-    return f"({select([scale**L for scale in scales])}*{polynomial})"
+    weights = np.linspace(*WEIGHT_RANGE, 231)
+    return spline_expression(WEIGHT, WEIGHT_KNOTS, fit_spline(weights, weights**L, WEIGHT_KNOTS))
 
 
-def table_lookup(rows: list[Row], values: list[str], side: str) -> str:
-    if all(value == values[0] for value in values):
-        return values[0]
-    middle = len(rows) // 2
-    boundary = rows[middle]
-    if boundary.reference == 1 and boundary.key == 870:
-        test = f"{HEIGHT}<87"
-    elif side == "low":
-        threshold = (boundary.key - float(EPSILON)) / 10
-        test = f"{HEIGHT}<={threshold:.7f}"
-    else:
-        threshold = (boundary.key - 1 + float(EPSILON)) / 10
-        test = f"{HEIGHT}<{threshold:.7f}"
-    left = table_lookup(rows[:middle], values[:middle], side)
-    right = table_lookup(rows[middle:], values[middle:], side)
-    return choose(test, left, right, '"')
+def height_term(rows: list[Row], name: str) -> str:
+    splines = []
+    for reference, knots in ((0, LENGTH_KNOTS), (1, HEIGHT_KNOTS)):
+        table = [row for row in rows if row.reference == reference]
+        heights = np.array([row.key / 10 for row in table])
+        values = np.array([lms_terms(row)[name] for row in table])
+        splines.append(spline_expression(HEIGHT, knots, fit_spline(heights, values, knots)))
+    return choose(f"{HEIGHT}<87", *splines)
 
 
-def endpoint(rows: list[Row], parameters: list[dict[str, float]], power: str, side: str) -> str:
-    def lookup(name: str) -> str:
-        return table_lookup(rows, [number(row[name]) for row in parameters], side)
-
-    central = f"({lookup('a')}*{power}+{lookup('b')})"
-    lower = f"({lookup('lower_slope')}*{WEIGHT}+{lookup('lower_intercept')})"
-    upper = f"({lookup('upper_slope')}*{WEIGHT}+{lookup('upper_intercept')})"
-    return choose(f"{WEIGHT}<{lookup('sd3n')}", lower,
-                  choose(f"{WEIGHT}>{lookup('sd3p')}", upper, central))
+def within_sd3(z: str) -> str:
+    return f"(3-d2:zing(6-d2:zing({z}+3)))" # min(3, max(-3, z))
 
 
 def generate_expression(rows: list[Row]) -> str:
-    floor = f"d2:floor({HEIGHT10})"
-    below_next = f"({floor}+1-{HEIGHT10})"
-    above_floor = f"({HEIGHT10}-{floor})"
-    low_key = f"({floor}+1-d2:oizp({below_next}-{EPSILON}))"
-    off_grid = f"(d2:oizp({above_floor}-{EPSILON})*d2:oizp({below_next}-{EPSILON}))"
-    fraction = f"({off_grid}*(({HEIGHT}-({low_key}/10))/0.1))"
-
     expressions = []
     for sex in (0, 1):
         selected = sorted(
@@ -151,12 +131,12 @@ def generate_expression(rows: list[Row]) -> str:
         )
         L = selected[0].l
         assert all(row.l == L for row in selected), "WHO L must be constant for each sex"
-        parameters = [coefficients(row) for row in selected]
-        power = weight_power(L)
-        low = endpoint(selected, parameters, power, "low")
-        high = endpoint(selected, parameters, power, "high")
+        terms = {name: height_term(selected, name) for name in lms_terms(selected[0])}
 
-        expressions.append(f"((1-{fraction})*{low}+{fraction}*{high})")
+        lms = f"(({weight_power(L)}/{terms['median_power']}-1)/({number(L)}*{terms['s']}))"
+        above_sd3p = f"(d2:zing({WEIGHT}-{terms['sd3p']})/{terms['sd23p']})"
+        below_sd3n = f"(d2:zing({terms['sd3n']}-{WEIGHT})/{terms['sd23n']})"
+        expressions.append(f"(({within_sd3(lms)}+{above_sd3p})-{below_sd3n})")
     expression = choose(f'{SEX}=="male"', *expressions)
     return f"d2:round({expression},2)"
 

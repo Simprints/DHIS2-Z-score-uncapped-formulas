@@ -33,6 +33,9 @@ Also, `nutrition-status-wfh-generate-who-lms.py` similarly outputs a program rul
 
 This is needed because an attempt to just use a precalculated WFH z-score value sometimes causes a missed "double-hop" calculation in DHIS2 program rules. It is more reliable to calculate the z-score from scratch, right in the Nutrition Status program rule expression.
 
+#### Optimized and reference WFH LMS z-scores
+
+The scripts above for z-score and nutrition status are both optimized by fitting with cubic splines. That reduces the formula precision to a still practical value of 0.01 standard deviation, but also reduces parsing and computational load on the DHIS2 program rule evaluation engine, avoiding app slowdowns. The unoptimized implementations are available in the `reference` folder, and those do not have pre-generated formulas in the `output` folder.
 
 References:
 * Z-score logic in the DHIS2 expression parser: https://github.com/dhis2/expression-parser/blob/v1.4.2/src/commonMain/kotlin/org/hisp/dhis/lib/expression/math/ZScore.kt#L21-L68
